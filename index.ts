@@ -151,6 +151,7 @@ export default class ReactNativeBiometrics {
      * @returns {Promise<Object>} Promise that resolves to an object with details about biometrics available
      */
     isSensorAvailable(): Promise<IsSensorAvailableResult> {
+      console.log('Using local version of react-native-biometrics - isSensorAvailable called');
       return bridge.isSensorAvailable({
         allowDeviceCredentials: this.allowDeviceCredentials
       })
