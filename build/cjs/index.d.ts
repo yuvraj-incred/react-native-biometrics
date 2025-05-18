@@ -1,7 +1,7 @@
 /**
  * Type alias for possible biometry types
  */
-export type BiometryType = 'TouchID' | 'FaceID' | 'Biometrics';
+export declare type BiometryType = 'TouchID' | 'FaceID' | 'Biometrics';
 interface RNBiometricsOptions {
     allowDeviceCredentials?: boolean;
 }
@@ -46,7 +46,7 @@ export declare const BiometryTypes: {
     readonly FaceID: "FaceID";
     readonly Biometrics: "Biometrics";
 };
-export type BiometryTypeValue = typeof BiometryTypes[keyof typeof BiometryTypes];
+export declare type BiometryTypeValue = typeof BiometryTypes[keyof typeof BiometryTypes];
 export declare class ReactNativeBiometrics {
     private readonly allowDeviceCredentials;
     /**

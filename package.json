@@ -7,13 +7,14 @@
   "module": "build/esm/index.js",
   "types": "build/esm/index.d.ts",
   "scripts": {
-    "clean": "rm -rf build && rm -rf node_modules && npm install",
-    "build": "npm run build:cjs && npm run build:esm",
+    "clean": "rm -rf build && rm -rf node_modules && yarn install",
+    "build": "yarn build:cjs && yarn build:esm",
     "build:cjs": "tsc --target es5 --outDir build/cjs --module commonjs",
     "build:esm": "tsc --target es5 --outDir build/esm --module esnext",
-    "release": "npm run clean && npm run build && npm publish"
+    "release": "yarn clean && yarn build && yarn publish"
   },
   "keywords": [
+    "react",
     "react-native",
     "android",
     "ios",
