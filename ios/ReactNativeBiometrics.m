@@ -68,7 +68,7 @@ RCT_EXPORT_METHOD(createKeys: (NSDictionary *)params resolver:(RCTPromiseResolve
     NSDictionary *keyAttributes = @{
                                     (id)kSecClass: (id)kSecClassKey,
                                     (id)kSecAttrKeyType: (id)kSecAttrKeyTypeRSA,
-                                    (id)kSecAttrKeySizeInBits: @2048,
+                                    (id)kSecAttrKeySizeInBits: @4096,
                                     (id)kSecPrivateKeyAttrs: @{
                                         (id)kSecAttrIsPermanent: @YES,
                                         (id)kSecUseAuthenticationUI: (id)kSecUseAuthenticationUIAllow,
@@ -129,6 +129,11 @@ RCT_EXPORT_METHOD(createSignature: (NSDictionary *)params resolver:(RCTPromiseRe
     NSString *promptMessage = [RCTConvert NSString:params[@"promptMessage"]];
     NSString *payload = [RCTConvert NSString:params[@"payload"]];
 
+    if (!promptMessage || !payload) {
+      reject(@"invalid_params", @"Missing required parameters", nil);
+      return;
+    }
+
     NSData *biometricKeyTag = [self getBiometricKeyTag];
     NSDictionary *query = @{
                             (id)kSecClass: (id)kSecClassKey,
@@ -143,7 +148,7 @@ RCT_EXPORT_METHOD(createSignature: (NSDictionary *)params resolver:(RCTPromiseRe
     if (status == errSecSuccess) {
       NSError *error;
       NSData *dataToSign = [payload dataUsingEncoding:NSUTF8StringEncoding];
-      NSData *signature = CFBridgingRelease(SecKeyCreateSignature(privateKey, kSecKeyAlgorithmRSASignatureMessagePKCS1v15SHA256, (CFDataRef)dataToSign, (void *)&error));
+      NSData *signature = CFBridgingRelease(SecKeyCreateSignature(privateKey, kSecKeyAlgorithmRSASignatureMessagePKCS1v15SHA512, (CFDataRef)dataToSign, (void *)&error));
 
       if (signature != nil) {
         NSString *signatureString = [signature base64EncodedStringWithOptions:0];
@@ -175,12 +180,17 @@ RCT_EXPORT_METHOD(simplePrompt: (NSDictionary *)params resolver:(RCTPromiseResol
     NSString *fallbackPromptMessage = [RCTConvert NSString:params[@"fallbackPromptMessage"]];
     BOOL allowDeviceCredentials = [RCTConvert BOOL:params[@"allowDeviceCredentials"]];
 
+    if (!promptMessage) {
+      reject(@"invalid_params", @"Missing prompt message", nil);
+      return;
+    }
+
     LAContext *context = [[LAContext alloc] init];
     LAPolicy laPolicy = LAPolicyDeviceOwnerAuthenticationWithBiometrics;
 
     if (allowDeviceCredentials == TRUE) {
       laPolicy = LAPolicyDeviceOwnerAuthentication;
-      context.localizedFallbackTitle = fallbackPromptMessage;
+      context.localizedFallbackTitle = fallbackPromptMessage ?: @"Use Passcode";
     } else {
       context.localizedFallbackTitle = @"";
     }
@@ -250,106 +260,78 @@ RCT_EXPORT_METHOD(biometricKeysExist: (RCTPromiseResolveBlock)resolve rejecter:(
                                 (id)kSecAttrKeyType: (id)kSecAttrKeyTypeRSA
                                 };
 
-  OSStatus status = SecItemDelete((__bridge CFDictionaryRef)deleteQuery);
-  return status;
+  return SecItemDelete((__bridge CFDictionaryRef)deleteQuery);
 }
 
-- (NSString *)getBiometryType:(LAContext *)context
-{
+- (NSString *) getBiometryType:(LAContext *)context {
   if (@available(iOS 11, *)) {
-    return (context.biometryType == LABiometryTypeFaceID) ? @"FaceID" : @"TouchID";
+    if (context.biometryType == LABiometryTypeFaceID) {
+      return @"FaceID";
+    } else if (context.biometryType == LABiometryTypeTouchID) {
+      return @"TouchID";
+    }
   }
-
-  return @"TouchID";
+  return @"Biometrics";
 }
 
-- (NSString *)keychainErrorToString:(OSStatus)error {
-  NSString *message = [NSString stringWithFormat:@"%ld", (long)error];
+- (NSData *) addHeaderPublickey:(NSData *)publicKeyData {
+  unsigned char builder[15];
+  unsigned long bitstringEncLength;
+  if (publicKeyData.length + 1 < 128)
+    bitstringEncLength = 1;
+  else
+    bitstringEncLength = ((publicKeyData.length + 1) / 256) + 2;
+  builder[0] = 0x30;
+  size_t i = sizeof(builder) - 1;
+  builder[i--] = 0x00;
+  for (int j = 0; j < publicKeyData.length; j++)
+    builder[i--] = publicKeyData.bytes[j];
+  builder[i--] = 0x00;
+  builder[i--] = bitstringEncLength;
+  builder[i--] = 0x03;
+  i -= 4;
+  builder[i--] = 0x06;
+  builder[i--] = 0x2A;
+  builder[i--] = 0x86;
+  builder[i--] = 0x48;
+  builder[i--] = 0x86;
+  builder[i--] = 0xF7;
+  builder[i--] = 0x0D;
+  builder[i--] = 0x01;
+  builder[i--] = 0x01;
+  builder[i--] = 0x01;
+  builder[i--] = 0x05;
+  builder[i--] = 0x00;
+  builder[i--] = 0x03;
+  builder[i--] = 0x81;
 
+  NSMutableData * encKey = [[NSMutableData alloc] init];
+  [encKey appendBytes:builder length:sizeof(builder)];
+  [encKey appendData:publicKeyData];
+  return encKey;
+}
+
+- (NSString *) keychainErrorToString:(OSStatus)error {
+  NSString *message = [NSString stringWithFormat:@"%ld", (long)error];
+  
   switch (error) {
     case errSecSuccess:
       message = @"success";
       break;
-
     case errSecDuplicateItem:
       message = @"error item already exists";
       break;
-
-    case errSecItemNotFound :
+    case errSecItemNotFound:
       message = @"error item not found";
       break;
-
     case errSecAuthFailed:
-      message = @"error item authentication failed";
+      message = @"error item auth failed";
       break;
-
     default:
-      break;
+      message = [NSString stringWithFormat:@"error unknown OSStatus: %ld", (long)error];
   }
-
+  
   return message;
-}
-
-
-- (NSData *)addHeaderPublickey:(NSData *)publicKeyData {
-
-    unsigned char builder[15];
-    NSMutableData * encKey = [[NSMutableData alloc] init];
-    unsigned long bitstringEncLength;
-
-    static const unsigned char _encodedRSAEncryptionOID[15] = {
-
-        /* Sequence of length 0xd made up of OID followed by NULL */
-        0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86,
-        0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00
-
-    };
-    // When we get to the bitstring - how will we encode it?
-    if  ([publicKeyData length ] + 1  < 128 )
-        bitstringEncLength = 1 ;
-    else
-        bitstringEncLength = (([publicKeyData length ] +1 ) / 256 ) + 2 ;
-    //
-    //        // Overall we have a sequence of a certain length
-    builder[0] = 0x30;    // ASN.1 encoding representing a SEQUENCE
-    //        // Build up overall size made up of -
-    //        // size of OID + size of bitstring encoding + size of actual key
-    size_t i = sizeof(_encodedRSAEncryptionOID) + 2 + bitstringEncLength + [publicKeyData length];
-    size_t j = encodeLength(&builder[1], i);
-    [encKey appendBytes:builder length:j +1];
-
-    // First part of the sequence is the OID
-    [encKey appendBytes:_encodedRSAEncryptionOID
-                 length:sizeof(_encodedRSAEncryptionOID)];
-
-    // Now add the bitstring
-    builder[0] = 0x03;
-    j = encodeLength(&builder[1], [publicKeyData length] + 1);
-    builder[j+1] = 0x00;
-    [encKey appendBytes:builder length:j + 2];
-
-    // Now the actual key
-    [encKey appendData:publicKeyData];
-
-    return encKey;
-}
-
-size_t encodeLength(unsigned char * buf, size_t length) {
-
-    // encode length in ASN.1 DER format
-    if (length < 128) {
-        buf[0] = length;
-        return 1;
-    }
-
-    size_t i = (length / 256) + 1;
-    buf[0] = i + 0x80;
-    for (size_t j = 0 ; j < i; ++j) {
-        buf[i - j] = length & 0xFF;
-        length = length >> 8;
-    }
-
-    return i + 1;
 }
 
 @end
