@@ -285,7 +285,7 @@ RCT_EXPORT_METHOD(biometricKeysExist: (RCTPromiseResolveBlock)resolve rejecter:(
   size_t i = sizeof(builder) - 1;
   builder[i--] = 0x00;
   for (int j = 0; j < publicKeyData.length; j++)
-    builder[i--] = publicKeyData.bytes[j];
+    builder[i--] = ((unsigned char *)publicKeyData.bytes)[j];
   builder[i--] = 0x00;
   builder[i--] = bitstringEncLength;
   builder[i--] = 0x03;
