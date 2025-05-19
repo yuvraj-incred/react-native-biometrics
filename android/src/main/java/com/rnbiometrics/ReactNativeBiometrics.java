@@ -99,19 +99,36 @@ public class ReactNativeBiometrics extends ReactContextBaseJavaModule {
             if (isCurrentSDKMarshmallowOrLater()) {
                 deleteBiometricKey();
                 KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_RSA, "AndroidKeyStore");
-                KeyGenParameterSpec keyGenParameterSpec = new KeyGenParameterSpec.Builder(biometricKeyAlias, KeyProperties.PURPOSE_SIGN)
-                        .setDigests(KeyProperties.DIGEST_SHA256)
+                
+                // Configure key parameters based on Android version
+                KeyGenParameterSpec.Builder builder = new KeyGenParameterSpec.Builder(biometricKeyAlias, KeyProperties.PURPOSE_SIGN)
                         .setSignaturePaddings(KeyProperties.SIGNATURE_PADDING_RSA_PKCS1)
-                        .setAlgorithmParameterSpec(new RSAKeyGenParameterSpec(2048, RSAKeyGenParameterSpec.F4))
                         .setUserAuthenticationRequired(true)
-                        .build();
-                keyPairGenerator.initialize(keyGenParameterSpec);
+                        .setUserAuthenticationValidityDurationSeconds(-1);
+
+                // Add version-specific configurations
+                if (isCurrentSDKPieOrLater()) {
+                    // Android 9.0 (API 28) and above: Use strongest available options
+                    builder.setDigests(KeyProperties.DIGEST_SHA512)
+                           .setAlgorithmParameterSpec(new RSAKeyGenParameterSpec(4096, RSAKeyGenParameterSpec.F4))
+                           .setUserPresenceRequired(true)
+                           .setAttestationChallenge(null);
+                } else if (isCurrentSDKOreoOrLater()) {
+                    // Android 8.0-8.1 (API 26-27): Use SHA-512 but with 2048-bit RSA
+                    builder.setDigests(KeyProperties.DIGEST_SHA512)
+                           .setAlgorithmParameterSpec(new RSAKeyGenParameterSpec(2048, RSAKeyGenParameterSpec.F4));
+                } else {
+                    // Android 6.0-7.1 (API 23-25): Use SHA-256 with 2048-bit RSA
+                    builder.setDigests(KeyProperties.DIGEST_SHA256)
+                           .setAlgorithmParameterSpec(new RSAKeyGenParameterSpec(2048, RSAKeyGenParameterSpec.F4));
+                }
+
+                keyPairGenerator.initialize(builder.build());
 
                 KeyPair keyPair = keyPairGenerator.generateKeyPair();
                 PublicKey publicKey = keyPair.getPublic();
                 byte[] encodedPublicKey = publicKey.getEncoded();
-                String publicKeyString = Base64.encodeToString(encodedPublicKey, Base64.DEFAULT);
-                publicKeyString = publicKeyString.replaceAll("\r", "").replaceAll("\n", "");
+                String publicKeyString = Base64.encodeToString(encodedPublicKey, Base64.NO_WRAP);
 
                 WritableMap resultMap = new WritableNativeMap();
                 resultMap.putString("publicKey", publicKeyString);
@@ -160,7 +177,17 @@ public class ReactNativeBiometrics extends ReactContextBaseJavaModule {
                                 String cancelButtonText = params.getString("cancelButtonText");
                                 boolean allowDeviceCredentials = params.getBoolean("allowDeviceCredentials");
 
-                                Signature signature = Signature.getInstance("SHA256withRSA");
+                                // Choose signature algorithm based on Android version
+                                String signatureAlgorithm;
+                                if (isCurrentSDKPieOrLater()) {
+                                    signatureAlgorithm = "SHA512withRSA";
+                                } else if (isCurrentSDKOreoOrLater()) {
+                                    signatureAlgorithm = "SHA512withRSA";
+                                } else {
+                                    signatureAlgorithm = "SHA256withRSA";
+                                }
+
+                                Signature signature = Signature.getInstance(signatureAlgorithm);
                                 KeyStore keyStore = KeyStore.getInstance("AndroidKeyStore");
                                 keyStore.load(null);
 
@@ -269,5 +296,13 @@ public class ReactNativeBiometrics extends ReactContextBaseJavaModule {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    private boolean isCurrentSDKPieOrLater() {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.P;
+    }
+
+    private boolean isCurrentSDKOreoOrLater() {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.O;
     }
 }
