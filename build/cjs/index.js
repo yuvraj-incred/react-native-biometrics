@@ -78,6 +78,7 @@ var ReactNativeBiometrics = /** @class */ (function () {
                 switch (_a.label) {
                     case 0:
                         _a.trys.push([0, 2, , 3]);
+                        console.log('Using forked version of react-native-biometrics - isSensorAvailable called');
                         return [4 /*yield*/, bridge.isSensorAvailable({
                                 allowDeviceCredentials: this.allowDeviceCredentials
                             })];

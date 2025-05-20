@@ -4,6 +4,7 @@ import android.os.Build;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.Base64;
+import android.util.Log;
 
 import androidx.biometric.BiometricManager;
 import androidx.biometric.BiometricPrompt;
@@ -36,6 +37,8 @@ import java.util.concurrent.Executors;
 
 public class ReactNativeBiometrics extends ReactContextBaseJavaModule {
 
+    private static final String TAG = "ReactNativeBiometrics";
+
     protected String biometricKeyAlias = "biometric_key";
 
     public ReactNativeBiometrics(ReactApplicationContext reactContext) {
@@ -54,41 +57,52 @@ public class ReactNativeBiometrics extends ReactContextBaseJavaModule {
                 boolean allowDeviceCredentials = params.getBoolean("allowDeviceCredentials");
                 ReactApplicationContext reactApplicationContext = getReactApplicationContext();
                 BiometricManager biometricManager = BiometricManager.from(reactApplicationContext);
-                int canAuthenticate = biometricManager.canAuthenticate(getAllowedAuthenticators(allowDeviceCredentials));
+                
+                // Log available authenticators
+                int authenticators = getAllowedAuthenticators(allowDeviceCredentials);
+                Log.d(TAG, "Available authenticators: " + getAuthenticatorString(authenticators));
+                
+                int canAuthenticate = biometricManager.canAuthenticate(authenticators);
+                Log.d(TAG, "Can authenticate result: " + getAuthenticationResultString(canAuthenticate));
 
                 if (canAuthenticate == BiometricManager.BIOMETRIC_SUCCESS) {
                     WritableMap resultMap = new WritableNativeMap();
                     resultMap.putBoolean("available", true);
                     resultMap.putString("biometryType", "Biometrics");
+                    Log.d(TAG, "Biometric sensor is available");
                     promise.resolve(resultMap);
                 } else {
                     WritableMap resultMap = new WritableNativeMap();
                     resultMap.putBoolean("available", false);
 
+                    String errorMessage = "";
                     switch (canAuthenticate) {
                         case BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE:
-                            resultMap.putString("error", "BIOMETRIC_ERROR_NO_HARDWARE");
+                            errorMessage = "BIOMETRIC_ERROR_NO_HARDWARE";
                             break;
                         case BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE:
-                            resultMap.putString("error", "BIOMETRIC_ERROR_HW_UNAVAILABLE");
+                            errorMessage = "BIOMETRIC_ERROR_HW_UNAVAILABLE";
                             break;
                         case BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED:
-                            resultMap.putString("error", "BIOMETRIC_ERROR_NONE_ENROLLED");
+                            errorMessage = "BIOMETRIC_ERROR_NONE_ENROLLED";
                             break;
                         case BiometricManager.BIOMETRIC_ERROR_SECURITY_UPDATE_REQUIRED:
-                            resultMap.putString("error", "BIOMETRIC_ERROR_SECURITY_UPDATE_REQUIRED");
-                            break; 
+                            errorMessage = "BIOMETRIC_ERROR_SECURITY_UPDATE_REQUIRED";
+                            break;
                     }
-
+                    Log.d(TAG, "Biometric sensor error: " + errorMessage);
+                    resultMap.putString("error", errorMessage);
                     promise.resolve(resultMap);
                 }
             } else {
+                Log.d(TAG, "Android version not supported for biometrics");
                 WritableMap resultMap = new WritableNativeMap();
                 resultMap.putBoolean("available", false);
                 resultMap.putString("error", "Unsupported android version");
                 promise.resolve(resultMap);
             }
         } catch (Exception e) {
+            Log.e(TAG, "Error detecting biometrics availability: " + e.getMessage());
             promise.reject("Error detecting biometrics availability: " + e.getMessage(), "Error detecting biometrics availability: " + e.getMessage());
         }
     }
@@ -247,18 +261,25 @@ public class ReactNativeBiometrics extends ReactContextBaseJavaModule {
                                 String cancelButtonText = params.getString("cancelButtonText");
                                 boolean allowDeviceCredentials = params.getBoolean("allowDeviceCredentials");
 
+                                Log.d(TAG, "Starting biometric prompt with allowDeviceCredentials: " + allowDeviceCredentials);
+                                
                                 AuthenticationCallback authCallback = new SimplePromptCallback(promise);
                                 FragmentActivity fragmentActivity = (FragmentActivity) getCurrentActivity();
                                 Executor executor = Executors.newSingleThreadExecutor();
                                 BiometricPrompt biometricPrompt = new BiometricPrompt(fragmentActivity, executor, authCallback);
 
-                                biometricPrompt.authenticate(getPromptInfo(promptMessage, cancelButtonText, allowDeviceCredentials));
+                                PromptInfo promptInfo = getPromptInfo(promptMessage, cancelButtonText, allowDeviceCredentials);
+                                Log.d(TAG, "Prompt info created with authenticators: " + getAuthenticatorString(promptInfo.getAllowedAuthenticators()));
+                                
+                                biometricPrompt.authenticate(promptInfo);
                             } catch (Exception e) {
+                                Log.e(TAG, "Error displaying local biometric prompt: " + e.getMessage());
                                 promise.reject("Error displaying local biometric prompt: " + e.getMessage(), "Error displaying local biometric prompt: " + e.getMessage());
                             }
                         }
                     });
         } else {
+            Log.d(TAG, "Cannot display biometric prompt on android versions below 6.0");
             promise.reject("Cannot display biometric prompt on android versions below 6.0", "Cannot display biometric prompt on android versions below 6.0");
         }
     }
@@ -304,5 +325,36 @@ public class ReactNativeBiometrics extends ReactContextBaseJavaModule {
 
     private boolean isCurrentSDKOreoOrLater() {
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.O;
+    }
+
+    private String getAuthenticatorString(int authenticators) {
+        StringBuilder sb = new StringBuilder();
+        if ((authenticators & BiometricManager.Authenticators.BIOMETRIC_STRONG) != 0) {
+            sb.append("BIOMETRIC_STRONG ");
+        }
+        if ((authenticators & BiometricManager.Authenticators.BIOMETRIC_WEAK) != 0) {
+            sb.append("BIOMETRIC_WEAK ");
+        }
+        if ((authenticators & BiometricManager.Authenticators.DEVICE_CREDENTIAL) != 0) {
+            sb.append("DEVICE_CREDENTIAL ");
+        }
+        return sb.toString().trim();
+    }
+
+    private String getAuthenticationResultString(int result) {
+        switch (result) {
+            case BiometricManager.BIOMETRIC_SUCCESS:
+                return "BIOMETRIC_SUCCESS";
+            case BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE:
+                return "BIOMETRIC_ERROR_NO_HARDWARE";
+            case BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE:
+                return "BIOMETRIC_ERROR_HW_UNAVAILABLE";
+            case BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED:
+                return "BIOMETRIC_ERROR_NONE_ENROLLED";
+            case BiometricManager.BIOMETRIC_ERROR_SECURITY_UPDATE_REQUIRED:
+                return "BIOMETRIC_ERROR_SECURITY_UPDATE_REQUIRED";
+            default:
+                return "UNKNOWN_ERROR";
+        }
     }
 }

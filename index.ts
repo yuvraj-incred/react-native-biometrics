@@ -80,6 +80,7 @@ export class ReactNativeBiometrics {
    */
   async isSensorAvailable(): Promise<IsSensorAvailableResult> {
     try {
+      console.log('Using forked version of react-native-biometrics - isSensorAvailable called');
       return await bridge.isSensorAvailable({
         allowDeviceCredentials: this.allowDeviceCredentials
       })

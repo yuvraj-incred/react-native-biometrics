@@ -8,6 +8,7 @@
 #import <LocalAuthentication/LocalAuthentication.h>
 #import <Security/Security.h>
 #import <React/RCTConvert.h>
+#import <os/log.h>
 
 @implementation ReactNativeBiometrics
 
@@ -23,10 +24,14 @@ RCT_EXPORT_METHOD(isSensorAvailable: (NSDictionary *)params resolver:(RCTPromise
     laPolicy = LAPolicyDeviceOwnerAuthentication;
   }
 
+  os_log(OS_LOG_DEFAULT, "Checking biometric sensor availability with policy: %@", laPolicy == LAPolicyDeviceOwnerAuthenticationWithBiometrics ? @"Biometrics" : @"DeviceOwner");
+  
   BOOL canEvaluatePolicy = [context canEvaluatePolicy:laPolicy error:&la_error];
 
   if (canEvaluatePolicy) {
     NSString *biometryType = [self getBiometryType:context];
+    os_log(OS_LOG_DEFAULT, "Biometric sensor is available. Type: %@", biometryType);
+    
     NSDictionary *result = @{
       @"available": @(YES),
       @"biometryType": biometryType
@@ -35,6 +40,8 @@ RCT_EXPORT_METHOD(isSensorAvailable: (NSDictionary *)params resolver:(RCTPromise
     resolve(result);
   } else {
     NSString *errorMessage = [NSString stringWithFormat:@"%@", la_error];
+    os_log_error(OS_LOG_DEFAULT, "Biometric sensor error: %@", errorMessage);
+    
     NSDictionary *result = @{
       @"available": @(NO),
       @"error": errorMessage
@@ -205,38 +212,97 @@ RCT_EXPORT_METHOD(simplePrompt: (NSDictionary *)params resolver:(RCTPromiseResol
     BOOL allowDeviceCredentials = [RCTConvert BOOL:params[@"allowDeviceCredentials"]];
 
     if (!promptMessage) {
+      os_log_error(OS_LOG_DEFAULT, "Missing prompt message");
       reject(@"invalid_params", @"Missing prompt message", nil);
       return;
     }
 
     LAContext *context = [[LAContext alloc] init];
-    LAPolicy laPolicy = LAPolicyDeviceOwnerAuthenticationWithBiometrics;
-
-    if (allowDeviceCredentials == TRUE) {
-      laPolicy = LAPolicyDeviceOwnerAuthentication;
-      context.localizedFallbackTitle = fallbackPromptMessage ?: @"Use Passcode";
+    NSError *error = nil;
+    
+    os_log(OS_LOG_DEFAULT, "Starting biometric prompt with allowDeviceCredentials: %@", allowDeviceCredentials ? @"YES" : @"NO");
+    
+    // First try biometric authentication
+    if ([context canEvaluatePolicy:LAPolicyDeviceOwnerAuthenticationWithBiometrics error:&error]) {
+      os_log(OS_LOG_DEFAULT, "Biometric authentication is available");
+      context.localizedFallbackTitle = allowDeviceCredentials ? (fallbackPromptMessage ?: @"Use Passcode") : @"";
+      
+      [context evaluatePolicy:LAPolicyDeviceOwnerAuthenticationWithBiometrics 
+              localizedReason:promptMessage 
+                        reply:^(BOOL success, NSError *biometricError) {
+        if (success) {
+          os_log(OS_LOG_DEFAULT, "Biometric authentication succeeded");
+          NSDictionary *result = @{
+            @"success": @(YES)
+          };
+          resolve(result);
+        } else if (biometricError.code == LAErrorUserCancel) {
+          os_log(OS_LOG_DEFAULT, "User cancelled biometric authentication");
+          NSDictionary *result = @{
+            @"success": @(NO),
+            @"error": @"User cancellation"
+          };
+          resolve(result);
+        } else if (allowDeviceCredentials) {
+          os_log(OS_LOG_DEFAULT, "Biometric authentication failed, falling back to device authentication. Error: %@", biometricError);
+          // If biometric fails and device credentials are allowed, try device authentication
+          [self tryDeviceAuthentication:context 
+                         promptMessage:promptMessage 
+                  fallbackPromptMessage:fallbackPromptMessage 
+                              resolver:resolve 
+                              rejecter:reject];
+        } else {
+          os_log_error(OS_LOG_DEFAULT, "Biometric authentication failed: %@", biometricError);
+          NSString *message = [NSString stringWithFormat:@"%@", biometricError];
+          reject(@"biometric_error", message, nil);
+        }
+      }];
+    } else if (allowDeviceCredentials) {
+      os_log(OS_LOG_DEFAULT, "Biometric authentication not available, falling back to device authentication. Error: %@", error);
+      // If biometric is not available and device credentials are allowed, try device authentication
+      [self tryDeviceAuthentication:context 
+                     promptMessage:promptMessage 
+              fallbackPromptMessage:fallbackPromptMessage 
+                          resolver:resolve 
+                          rejecter:reject];
     } else {
-      context.localizedFallbackTitle = @"";
+      os_log_error(OS_LOG_DEFAULT, "Biometric authentication not available: %@", error);
+      NSString *message = [NSString stringWithFormat:@"Biometric authentication not available: %@", error];
+      reject(@"biometric_error", message, nil);
     }
-
-    [context evaluatePolicy:laPolicy localizedReason:promptMessage reply:^(BOOL success, NSError *biometricError) {
-      if (success) {
-        NSDictionary *result = @{
-          @"success": @(YES)
-        };
-        resolve(result);
-      } else if (biometricError.code == LAErrorUserCancel) {
-        NSDictionary *result = @{
-          @"success": @(NO),
-          @"error": @"User cancellation"
-        };
-        resolve(result);
-      } else {
-        NSString *message = [NSString stringWithFormat:@"%@", biometricError];
-        reject(@"biometric_error", message, nil);
-      }
-    }];
   });
+}
+
+- (void)tryDeviceAuthentication:(LAContext *)context 
+                  promptMessage:(NSString *)promptMessage 
+           fallbackPromptMessage:(NSString *)fallbackPromptMessage 
+                       resolver:(RCTPromiseResolveBlock)resolve 
+                       rejecter:(RCTPromiseRejectBlock)reject {
+  os_log(OS_LOG_DEFAULT, "Attempting device authentication");
+  context.localizedFallbackTitle = fallbackPromptMessage ?: @"Use Passcode";
+  
+  [context evaluatePolicy:LAPolicyDeviceOwnerAuthentication 
+          localizedReason:promptMessage 
+                    reply:^(BOOL success, NSError *deviceError) {
+    if (success) {
+      os_log(OS_LOG_DEFAULT, "Device authentication succeeded");
+      NSDictionary *result = @{
+        @"success": @(YES)
+      };
+      resolve(result);
+    } else if (deviceError.code == LAErrorUserCancel) {
+      os_log(OS_LOG_DEFAULT, "User cancelled device authentication");
+      NSDictionary *result = @{
+        @"success": @(NO),
+        @"error": @"User cancellation"
+      };
+      resolve(result);
+    } else {
+      os_log_error(OS_LOG_DEFAULT, "Device authentication failed: %@", deviceError);
+      NSString *message = [NSString stringWithFormat:@"%@", deviceError];
+      reject(@"biometric_error", message, nil);
+    }
+  }];
 }
 
 RCT_EXPORT_METHOD(biometricKeysExist: (RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject) {
@@ -290,11 +356,14 @@ RCT_EXPORT_METHOD(biometricKeysExist: (RCTPromiseResolveBlock)resolve rejecter:(
 - (NSString *) getBiometryType:(LAContext *)context {
   if (@available(iOS 11, *)) {
     if (context.biometryType == LABiometryTypeFaceID) {
+      os_log(OS_LOG_DEFAULT, "Biometry type: FaceID");
       return @"FaceID";
     } else if (context.biometryType == LABiometryTypeTouchID) {
+      os_log(OS_LOG_DEFAULT, "Biometry type: TouchID");
       return @"TouchID";
     }
   }
+  os_log(OS_LOG_DEFAULT, "Biometry type: Generic Biometrics");
   return @"Biometrics";
 }
 
