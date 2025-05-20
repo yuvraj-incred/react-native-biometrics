@@ -200,7 +200,7 @@ RCT_EXPORT_METHOD(createSignature: (NSDictionary *)params resolver:(RCTPromiseRe
 }
 
 RCT_EXPORT_METHOD(simplePrompt: (NSDictionary *)params resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject) {
-  dispatch_async(dispatch_get_global_queue( DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+  dispatch_async(dispatch_get_main_queue(), ^{
     NSString *promptMessage = [RCTConvert NSString:params[@"promptMessage"]];
     NSString *fallbackPromptMessage = [RCTConvert NSString:params[@"fallbackPromptMessage"]];
     BOOL allowDeviceCredentials = [RCTConvert BOOL:params[@"allowDeviceCredentials"]];
@@ -229,6 +229,18 @@ RCT_EXPORT_METHOD(simplePrompt: (NSDictionary *)params resolver:(RCTPromiseResol
           NSDictionary *result = @{
             @"success": @(NO),
             @"error": @"User cancellation"
+          };
+          resolve(result);
+        } else if (biometricError.code == LAErrorSystemCancel) {
+          NSDictionary *result = @{
+            @"success": @(NO),
+            @"error": @"System cancelled"
+          };
+          resolve(result);
+        } else if (biometricError.code == LAErrorAppCancel) {
+          NSDictionary *result = @{
+            @"success": @(NO),
+            @"error": @"App cancelled"
           };
           resolve(result);
         } else if (allowDeviceCredentials) {
