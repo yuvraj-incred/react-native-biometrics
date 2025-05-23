@@ -213,88 +213,48 @@ RCT_EXPORT_METHOD(simplePrompt: (NSDictionary *)params resolver:(RCTPromiseResol
     LAContext *context = [[LAContext alloc] init];
     NSError *error = nil;
     
-    // First try biometric authentication
-    if ([context canEvaluatePolicy:LAPolicyDeviceOwnerAuthenticationWithBiometrics error:&error]) {
+    // Choose the appropriate policy based on allowDeviceCredentials
+    LAPolicy policy = allowDeviceCredentials ? LAPolicyDeviceOwnerAuthentication : LAPolicyDeviceOwnerAuthenticationWithBiometrics;
+    
+    if ([context canEvaluatePolicy:policy error:&error]) {
       context.localizedFallbackTitle = allowDeviceCredentials ? (fallbackPromptMessage ?: @"Use Passcode") : @"";
       
-      [context evaluatePolicy:LAPolicyDeviceOwnerAuthenticationWithBiometrics 
+      [context evaluatePolicy:policy 
               localizedReason:promptMessage 
-                        reply:^(BOOL success, NSError *biometricError) {
+                        reply:^(BOOL success, NSError *authError) {
         if (success) {
           NSDictionary *result = @{
             @"success": @(YES)
           };
           resolve(result);
-        } else if (biometricError.code == LAErrorUserCancel) {
+        } else if (authError.code == LAErrorUserCancel) {
           NSDictionary *result = @{
             @"success": @(NO),
             @"error": @"User cancellation"
           };
           resolve(result);
-        } else if (biometricError.code == LAErrorSystemCancel) {
+        } else if (authError.code == LAErrorSystemCancel) {
           NSDictionary *result = @{
             @"success": @(NO),
             @"error": @"System cancelled"
           };
           resolve(result);
-        } else if (biometricError.code == LAErrorAppCancel) {
+        } else if (authError.code == LAErrorAppCancel) {
           NSDictionary *result = @{
             @"success": @(NO),
             @"error": @"App cancelled"
           };
           resolve(result);
-        } else if (allowDeviceCredentials) {
-          // If biometric fails and device credentials are allowed, try device authentication
-          [self tryDeviceAuthentication:context 
-                         promptMessage:promptMessage 
-                  fallbackPromptMessage:fallbackPromptMessage 
-                              resolver:resolve 
-                              rejecter:reject];
         } else {
-          NSString *message = [NSString stringWithFormat:@"%@", biometricError];
+          NSString *message = [NSString stringWithFormat:@"%@", authError];
           reject(@"biometric_error", message, nil);
         }
       }];
-    } else if (allowDeviceCredentials) {
-      // If biometric is not available and device credentials are allowed, try device authentication
-      [self tryDeviceAuthentication:context 
-                     promptMessage:promptMessage 
-              fallbackPromptMessage:fallbackPromptMessage 
-                          resolver:resolve 
-                          rejecter:reject];
     } else {
-      NSString *message = [NSString stringWithFormat:@"Biometric authentication not available: %@", error];
+      NSString *message = [NSString stringWithFormat:@"Authentication not available: %@", error];
       reject(@"biometric_error", message, nil);
     }
   });
-}
-
-- (void)tryDeviceAuthentication:(LAContext *)context 
-                  promptMessage:(NSString *)promptMessage 
-           fallbackPromptMessage:(NSString *)fallbackPromptMessage 
-                       resolver:(RCTPromiseResolveBlock)resolve 
-                       rejecter:(RCTPromiseRejectBlock)reject {
-  context.localizedFallbackTitle = fallbackPromptMessage ?: @"Use Passcode";
-  
-  [context evaluatePolicy:LAPolicyDeviceOwnerAuthentication 
-          localizedReason:promptMessage 
-                    reply:^(BOOL success, NSError *deviceError) {
-    if (success) {
-      NSDictionary *result = @{
-        @"success": @(YES)
-      };
-      resolve(result);
-    } else if (deviceError.code == LAErrorUserCancel) {
-      NSDictionary *result = @{
-        @"success": @(NO),
-        @"error": @"User cancellation"
-      };
-      resolve(result);
-    } else {
-      NSString *message = [NSString stringWithFormat:@"%@", deviceError];
-      reject(@"biometric_error", message, nil);
-    }
-  }];
 }
 
 RCT_EXPORT_METHOD(biometricKeysExist: (RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject) {
